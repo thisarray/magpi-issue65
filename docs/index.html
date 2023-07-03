@@ -17,6 +17,12 @@ body {
 #original {
   margin-left: 1em;
 }
+form {
+  margin: 1em 0;
+}
+form textarea {
+  margin: 0 5em;
+}
   </style>
 </head>
 
@@ -56,11 +62,21 @@ The game screen appears here if your browser supports the Canvas API.
   <button type="button" id="pause">Pause</button>
 </section>
 
-<p>Use the corresponding number or numpad keys 1 through 8 to ring the bell.</p>
+<form id="bellSequence" name="bellSequence">
+<label>
+<p>Paste a bell sequence to play below:</p>
+<textarea id="inputSequence" name="inputSequence" cols="20" rows="20"></textarea>
+</label>
+</form>
 
-<p>Alternatively, just click the bell you want to ring.</p>
+<p>Use number keys 4 through 8 to change the number of bells if you did not paste a bell sequence above.
+<br>Use the RETURN key to reset the sequence.
+<br>Use the "-" key to increase the delay between each round.
+<br>Use the "=" key to decrease the delay between each round.</p>
 
-<p>In effect, it is like a slow piano using number or numpad keys or <a href="https://en.wikipedia.org/wiki/Handbell">handbells</a>.</p>
+<p>I simplified the interface from the original Python code.
+In particular, automatic was removed.
+Instead a random swap is chosen at the start of each round and you can override it with the mouse.</p>
 
 <h2>Attribution</h2>
 
@@ -352,6 +368,13 @@ TITLE = "Bells - Ring the changes";
 WIDTH = 1260;
 HEIGHT = 482;
 
+const FORM = document.querySelector('#bellSequence');
+
+/*
+ * String of characters used to indicate a bell sequence.
+ */
+const SEQUENCE_CHARACTERS = '12345678';
+
 const FONT_SIZE = 26;
 
 const BACKGROUND_COLOR = [0, 255, 255]; // background colour
@@ -434,10 +457,6 @@ class Bell {
     this.elapsed = 0;
   }
 
-  collidepoint() {
-    return this.frames[this.frameIndex].collidepoint(...arguments);
-  }
-
   /*
    * show one frame of the bell
    */
@@ -479,60 +498,261 @@ class Bell {
   }
 }
 
-let bells;
+/*
+ * Return a random integer N such that min <= N < max.
+ */
+function getRandomInteger(min, max) {
+  min = Math.ceil(min);
+  max = Math.floor(max);
+  return Math.floor((Math.random() * (max - min)) + min);
+}
+
+let speed, running, ringLength, filePlay, fSeq, bellSequence, lastSequence, swapFrom, delay, currentIndex, history, bells;
 
 function reset() {
+  speed = 0.4;
+  running = true;
+  ringLength = Bell.COUNT;
+  filePlay = false;
+  resetSequence();
+
   bells = [];
   for (let i = 0; i < Bell.COUNT; i++) {
     bells.push(new Bell(i));
   }
 }
 
+/*
+ * draw swap radio buttons
+ */
+function drawControls() {
+  if (filePlay) {
+    return;
+  }
+
+  for (let n = 0; n < (ringLength - 1); n++) {
+    let box = new Rect(Bell.START_X[n] + 10, 160, Bell.START_X[n+1] - Bell.START_X[n] - 20, 20);
+    if (n === swapFrom) {
+      screen.draw.filled_rect(box, [128, 32, 32]);
+      screen.draw.textbox("<-- Swap -->", box, {
+        color: [0, 0, 0],
+        fontsize: FONT_SIZE
+      });
+    }
+    else {
+      screen.draw.textbox("<-- Swap -->", box, {
+        color: [0, 0, 0],
+        fontsize: FONT_SIZE
+      });
+      screen.draw.rect(box, [0, 0, 0]);
+    }
+  }
+}
+
+/*
+ * display bell sequence
+ */
+function drawSequence() {
+  screen.draw.text("<---- Sequence ---->", {
+    topleft: [532, 207],
+    color: [0, 0, 0],
+    fontsize: FONT_SIZE
+  });
+
+  if (history instanceof Surface) {
+    screen.blit(history, [-30, 260]);
+  }
+
+  // Base the loop on bellSequence to avoid mismatch when ringLength differs from the length of bellSequence
+  for (let n = 0; n < bellSequence.length; n++) {
+    let bellNumber = bellSequence[n],
+        lastIndex = lastSequence.indexOf(bellNumber);
+    screen.draw.line([WIDTH - 50, HEIGHT - 16 - (lastIndex * 24)], [WIDTH - 30, HEIGHT - 16 - (n * 24)], Bell.TRAILS[bellNumber], 4);
+
+    // horizontally
+    screen.draw.text((bellNumber+ 1).toFixed(), {
+      topleft: [530 + (n * 24), 227],
+      color: [0, 0, 0],
+      fontsize: FONT_SIZE
+    });
+    // vertically
+    screen.draw.text((bellNumber+ 1).toFixed(), {
+      topleft: [WIDTH - 30, HEIGHT - ((n + 1) * 24)],
+      color: [0, 0, 0],
+      fontsize: FONT_SIZE
+    });
+  }
+
+  // indicate the current ring point
+  // Subtract 1 from currentIndex because it is 1 ahead due to ring delay
+  screen.draw.text("^", {
+    topleft: [530 + ((currentIndex - 1) * 24), 248],
+    color: [0, 0, 0],
+    fontsize: FONT_SIZE
+  });
+}
+
 function draw() {
   screen.fill(BACKGROUND_COLOR);
-  for (let b of bells) {
+  for (let b of bells.slice(0, ringLength)) {
     b.draw();
   }
+  drawControls();
+  drawSequence();
 }
 
 function update(dt) {
+  if (!running) {
+    return;
+  }
+
   for (let b of bells) {
     b.update(dt);
   }
+  if (bells.every(b => !b.active)) {
+    // If none of the bells is swinging
+    if (delay <= 0) {
+      if (filePlay && (fSeq.length <= 0)) {
+        running = false;
+        return;
+      }
+
+      delay = speed;
+      history = screen.getSurface(0, 260, WIDTH, HEIGHT - 260);
+      lastSequence = bellSequence.slice();
+      if (fSeq.length > 0) {
+        bellSequence = fSeq.shift();
+      }
+      else {
+        bellSequence = bellSequence.slice(0, ringLength);
+        if ((0 <= swapFrom) && (swapFrom < (ringLength - 1))) {
+          let temp = bellSequence[swapFrom];
+          bellSequence[swapFrom] = bellSequence[swapFrom+1];
+          bellSequence[swapFrom+1] = temp;
+        }
+      }
+      swapFrom = getRandomInteger(0, ringLength - 1);
+      currentIndex = 0;
+    }
+    else {
+      if (currentIndex < ringLength) {
+        bells[bellSequence[currentIndex]].swing();
+        currentIndex++;
+      }
+      else {
+        delay -= dt;
+      }
+    }
+  }
 }
 
-function on_mouse_down(pos, buttons) {
-  for (let b of bells) {
-    if (b.collidepoint(pos)) {
-      b.swing();
+function loadInputSequence() {
+  let lines = FORM.inputSequence.value.split('\n').map(l => l.trim()),
+      result = [],
+      length = 0,
+      row, index;
+  for (let line of lines) {
+    row = [];
+    for (let c of line) {
+      index = SEQUENCE_CHARACTERS.indexOf(c);
+      if (index >= 0) {
+        row.push(index);
+      }
+    }
+    if (row.length > 0) {
+      if (length <= 0) {
+        length = row.length;
+      }
+      if (row.length !== length) {
+        window.alert(`Change in the number of bells in line: ${ line }`);
+        break;
+      }
+      if (row.map(n => (n + 1).toFixed()).sort().join('') !== SEQUENCE_CHARACTERS.substring(0, length)) {
+        window.alert(`Invalid bell sequence in line: ${ line }`);
+        break;
+      }
+      result.push(row);
+    }
+  }
+
+  return result;
+}
+
+function resetSequence() {
+  fSeq = loadInputSequence();
+  if (fSeq.length > 0) {
+    filePlay = true;
+    ringLength = fSeq[0].length;
+    bellSequence = fSeq.shift();
+    lastSequence = bellSequence.slice();
+  }
+  else {
+    filePlay = false;
+    bellSequence = [];
+    lastSequence = [];
+    for (let n = 0; n < ringLength; n++) {
+      bellSequence.push(n);
+      lastSequence.push(n);
+    }
+  }
+  swapFrom = getRandomInteger(0, ringLength - 1);
+
+  delay = speed;
+  currentIndex = 0;
+  history = null;
+}
+
+/*
+ * Look at click for swap positions
+ */
+function on_mouse_down(pos) {
+  if (filePlay) {
+    return;
+  }
+
+  if ((pos[1] > 160) && (pos[1] < 180)) { // swap click
+    for (let b = 0; b < (ringLength - 1); b++) {
+      if ((pos[0] > (Bell.START_X[b] + 10)) && (pos[0] < (Bell.START_X[b+1] + 10))) {
+        swapFrom = b;
+      }
     }
   }
 }
 
 function on_key_down(key) {
-  if ((key === keys.K_1) || (key === keys.KP1)) {
-    bells[0].swing();
+  if (key === keys.RETURN) { // reset sequence
+    resetSequence();
   }
-  if ((key === keys.K_2) || (key === keys.KP2)) {
-    bells[1].swing();
+  if (!filePlay) {
+    if (key === keys.K_4) {
+      ringLength = 4; // number of bells
+      resetSequence();
+    }
+    if (key === keys.K_5) {
+      ringLength = 5; // number of bells
+      resetSequence();
+    }
+    if (key === keys.K_6) {
+      ringLength = 6; // number of bells
+      resetSequence();
+    }
+    if (key === keys.K_7) {
+      ringLength = 7; // number of bells
+      resetSequence();
+    }
+    if (key === keys.K_8) {
+      ringLength = 8; // number of bells
+      resetSequence();
+    }
   }
-  if ((key === keys.K_3) || (key === keys.KP3)) {
-    bells[2].swing();
+  if (key === keys.EQUALS) { // reduce speed
+    speed -= 0.04;
+    if (speed < 0.08) {
+      speed = 0.08;
+    }
   }
-  if ((key === keys.K_4) || (key === keys.KP4)) {
-    bells[3].swing();
-  }
-  if ((key === keys.K_5) || (key === keys.KP5)) {
-    bells[4].swing();
-  }
-  if ((key === keys.K_6) || (key === keys.KP6)) {
-    bells[5].swing();
-  }
-  if ((key === keys.K_7) || (key === keys.KP7)) {
-    bells[6].swing();
-  }
-  if ((key === keys.K_8) || (key === keys.KP8)) {
-    bells[7].swing();
+  if (key === keys.MINUS) { // increase speed
+    speed += 0.04;
   }
 }
 
