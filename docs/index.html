@@ -69,6 +69,8 @@ The game screen appears here if your browser supports the Canvas API.
 </label>
 </form>
 
+<p>Due to the way <a href="https://github.com/thisarray/jsgame0">jsgame0.js</a> takes control of the keyboard, you need to click "Pause" before pasting anything with the keyboard while the sequence is running.</p>
+
 <p>Use number keys 4 through 8 to change the number of bells if you did not paste a bell sequence above.
 <br>Use the RETURN key to reset the sequence.
 <br>Use the "-" key to increase the delay between each round.
@@ -511,9 +513,7 @@ let speed, running, ringLength, filePlay, fSeq, bellSequence, lastSequence, swap
 
 function reset() {
   speed = 0.4;
-  running = true;
   ringLength = Bell.COUNT;
-  filePlay = false;
   resetSequence();
 
   bells = [];
@@ -584,7 +584,7 @@ function drawSequence() {
   }
 
   // indicate the current ring point
-  // Subtract 1 from currentIndex because it is 1 ahead due to ring delay
+  // Subtract 1 from currentIndex because it is 1 ahead
   screen.draw.text("^", {
     topleft: [530 + ((currentIndex - 1) * 24), 248],
     color: [0, 0, 0],
@@ -638,6 +638,8 @@ function update(dt) {
       if (currentIndex < ringLength) {
         bells[bellSequence[currentIndex]].swing();
         currentIndex++;
+        // Update delay in case speed was changed
+        delay = speed;
       }
       else {
         delay -= dt;
@@ -679,11 +681,12 @@ function loadInputSequence() {
 }
 
 function resetSequence() {
+  running = true;
   fSeq = loadInputSequence();
   if (fSeq.length > 0) {
     filePlay = true;
-    ringLength = fSeq[0].length;
     bellSequence = fSeq.shift();
+    ringLength = bellSequence.length;
     lastSequence = bellSequence.slice();
   }
   else {
